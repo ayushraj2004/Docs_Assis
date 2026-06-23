@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Docs Assist — Document Intelligence</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        accent: { DEFAULT:'#D97757', hover:'#C76647' },
+        surface: { 900:'#1A1816', 800:'#24211E', 700:'#2D2A26', 600:'#34302B' }
+      },
+      fontFamily: { sans: ['Inter','system-ui','sans-serif'] }
+    }
+  }
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+<link rel="stylesheet" href="/static/css/style.css"/>
+</head>
+
+<body class="flex h-screen overflow-hidden font-sans antialiased">
+
+<!-- ── AMBIENT BACKGROUND ───────────────────────────────────────────────── -->
+<div class="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+  <canvas id="particleCanvas" class="absolute inset-0 opacity-30"></canvas>
+</div>
+
+<!-- ══════════════════════════ SIDEBAR ══════════════════════════════════── -->
+<aside id="sidebar" class="sidebar relative z-20 w-72 flex-shrink-0 flex flex-col">
+
+  <!-- Logo -->
+  <div class="p-5 flex items-center justify-between" style="border-bottom:1px solid #4A443D">
+    <div class="flex items-center gap-3">
+      <div class="logo-icon w-9 h-9 rounded-xl flex items-center justify-center relative overflow-hidden">
+        <img src="/static/DD.png" alt="DeepDocs" class="w-full h-full object-cover relative z-10"/>
+      </div>
+      <div>
+        <span class="font-bold text-base tracking-tight" style="color:#F5F1EB">Docs Assist</span>
+        <div class="text-[10px] font-medium tracking-widest uppercase" style="color:#D97757">Document AI</div>
+      </div>
+    </div>
+    <button onclick="newChat()" title="New Chat" class="new-chat-btn w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white transition-all duration-200">
+      <i class="fa-solid fa-plus text-sm"></i>
+    </button>
+  </div>
+
+  <!-- Upload Zone -->
+  <div class="p-4" style="border-bottom:1px solid #4A443D">
+    <div id="dropzone" class="dropzone rounded-2xl p-5 text-center cursor-pointer group relative overflow-hidden"
+      onclick="document.getElementById('fileInput').click()"
+      ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
+      <div class="dropzone-bg absolute inset-0 rounded-2xl"></div>
+      <div class="relative z-10">
+        <div class="upload-icon w-10 h-10 mx-auto rounded-xl flex items-center justify-center mb-2 transition-all duration-300">
+          <i class="fa-solid fa-cloud-arrow-up text-lg transition-colors duration-300" style="color:#D97757"></i>
+        </div>
+        <p class="text-xs font-semibold transition-colors" style="color:#B9B0A5">Drop files or <span style="color:#D97757">browse</span></p>
+        <p class="text-[10px] mt-1" style="color:#8E8478">PDF · DOCX · TXT &nbsp;·&nbsp; Max 50MB</p>
+      </div>
+    </div>
+    <input type="file" id="fileInput" multiple accept=".pdf,.docx,.txt" class="hidden" onchange="handleFileSelect(event)"/>
+    <div id="uploadProgress" class="hidden mt-3 space-y-2"></div>
+  </div>
+
+  <!-- Stats -->
+  <div class="px-4 py-3 grid grid-cols-2 gap-2" style="border-bottom:1px solid #4A443D">
+    <div class="stat-card rounded-xl p-3 text-center relative overflow-hidden">
+      <div class="stat-glow stat-glow-indigo"></div>
+      <div id="statDocs" class="text-2xl font-bold relative z-10" style="color:#F5F1EB">0</div>
+      <div class="text-[10px] font-medium uppercase tracking-wider relative z-10" style="color:#D97757">Documents</div>
+    </div>
+    <div class="stat-card rounded-xl p-3 text-center relative overflow-hidden">
+      <div class="stat-glow stat-glow-emerald"></div>
+      <div id="statChunks" class="text-2xl font-bold relative z-10" style="color:#F5F1EB">0</div>
+      <div class="text-[10px] font-medium uppercase tracking-wider relative z-10" style="color:#4CAF50">Chunks</div>
+    </div>
+  </div>
+
+  <!-- Scrollable Area -->
+  <div class="flex-1 overflow-y-auto px-4 py-4 space-y-5 custom-scroll">
+
+    <!-- Pinned Answers -->
+    <div>
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-[10px] font-semibold uppercase tracking-widest" style="color:#8E8478">📌 Pinned</span>
+      </div>
+      <div id="pinnedList"><p class="text-xs text-gray-600 text-center py-2">No pinned answers yet</p></div>
+    </div>
+
+    <!-- Documents -->
+    <div>
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-[10px] font-semibold uppercase tracking-widest" style="color:#8E8478">Documents</span>
+        <button onclick="clearAllDocuments()" class="text-[10px] text-red-500/70 hover:text-red-400 transition-colors">Clear all</button>
+      </div>
+      <div id="documentList">
+        <div class="empty-state rounded-xl p-4 text-center">
+          <i class="fa-regular fa-folder-open text-gray-600 text-xl mb-2 block"></i>
+          <p class="text-xs text-gray-600">No documents yet</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chat History -->
+    <div>
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-[10px] font-semibold uppercase tracking-widest" style="color:#8E8478">History</span>
+        <button onclick="clearAllHistory()" class="text-[10px] text-red-500/70 hover:text-red-400 transition-colors">Clear</button>
+      </div>
+      <div id="historyList">
+        <p class="text-xs text-gray-600 text-center py-2">No history yet</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Bar -->
+  <div class="p-4 space-y-2" style="border-top:1px solid #4A443D">
+    <div class="flex items-center justify-between">
+      <button onclick="toggleTheme()" class="flex items-center gap-2 text-xs transition-colors duration-200" style="color:#8E8478">
+        <i id="themeIcon" class="fa-solid fa-sun text-yellow-400"></i>
+        <span id="themeLabel">Light Mode</span>
+      </button>
+      <button onclick="exportChat()" class="flex items-center gap-1.5 text-xs transition-colors duration-200" style="color:#8E8478">
+        <i class="fa-solid fa-arrow-down-to-line"></i> Export
+      </button>
+    </div>
+    <div class="flex items-center gap-2">
+      <button onclick="openAnalytics()" class="flex-1 flex items-center justify-center gap-1.5 text-xs transition-colors py-1.5 rounded-lg" style="color:#8E8478">
+        <i class="fa-solid fa-chart-bar"></i> Analytics
+      </button>
+      <button onclick="openNotes()" class="flex-1 flex items-center justify-center gap-1.5 text-xs transition-colors py-1.5 rounded-lg" style="color:#8E8478">
+        <i class="fa-solid fa-note-sticky"></i> Notes
+      </button>
+    </div>
+  </div>
+</aside>
+
+<!-- ══════════════════════════ MAIN ══════════════════════════════════────── -->
+<main class="flex-1 flex flex-col overflow-hidden relative z-10">
+
+  <!-- Topbar -->
+  <header class="topbar px-4 py-3 flex items-center justify-between flex-shrink-0">
+    <button onclick="toggleSidebar()" class="w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-200" style="color:#8E8478">
+      <i class="fa-solid fa-bars-staggered"></i>
+    </button>
+    <div class="flex items-center gap-2">
+      <div id="statusDot" class="w-1.5 h-1.5 rounded-full" style="background:#8E8478"></div>
+      <span id="statusText" class="text-[11px] font-medium" style="color:#8E8478">No documents</span>
+    </div>
+  </header>
+
+  <!-- Chat Window -->
+  <div id="chatWindow" class="flex-1 overflow-y-auto px-4 md:px-8 py-6 pt-14 space-y-6 custom-scroll">
+
+    <!-- Welcome Screen -->
+    <div id="welcomeScreen" class="flex flex-col items-center justify-center min-h-full text-center px-4 py-8">
+
+      <!-- Hero -->
+      <div class="hero-icon w-24 h-24 rounded-3xl flex items-center justify-center mb-6 relative overflow-hidden">
+        <div class="hero-icon-rings"></div>
+        <img src="/static/DD.png" alt="DeepDocs" class="w-full h-full object-cover relative z-10"/>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-center gap-2 px-3 py-1.5 rounded-full mb-4 max-w-full" style="background:rgba(217,119,87,.1);border:1px solid rgba(217,119,87,.25)">
+        <span class="w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0" style="background:#D97757"></span>
+        <span class="text-xs font-medium text-center" style="color:#D97757">Powered by FAISS + Sentence Transformers + Groq LLM</span>
+      </div>
+
+      <h2 class="text-2xl sm:text-4xl font-bold mb-3 hero-title w-full" style="color:#F5F1EB">Docs Assist<br/><span class="gradient-text"></span></h2>
+      <p class="max-w-md mb-8 text-sm leading-relaxed" style="color:#8E8478">Upload any document and get instant, accurate answers with source citations. No hallucinations — only verified information from your files.</p>
+
+      <!-- Feature Cards -->
+
+      <!-- Suggested Prompts -->
+      <div class="w-full max-w-2xl pb-4">
+        <p class="text-xs mb-3 uppercase tracking-widest font-medium" style="color:#8E8478">Try asking</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <button onclick="setPrompt('Summarize the key points of this document')" class="prompt-chip text-left px-4 py-3 rounded-xl text-xs transition-all duration-200" style="color:#B9B0A5">
+            <i class="fa-solid fa-list-ul mr-2" style="color:#D97757"></i>Summarize the key points of this document
+          </button>
+          <button onclick="setPrompt('What are the main conclusions?')" class="prompt-chip text-left px-4 py-3 rounded-xl text-xs transition-all duration-200" style="color:#B9B0A5">
+            <i class="fa-solid fa-lightbulb mr-2" style="color:#D97757"></i>What are the main conclusions?
+          </button>
+          <button onclick="setPrompt('List all important dates and events')" class="prompt-chip text-left px-4 py-3 rounded-xl text-xs transition-all duration-200" style="color:#B9B0A5">
+            <i class="fa-solid fa-calendar mr-2" style="color:#4CAF50"></i>List all important dates and events
+          </button>
+          <button onclick="setPrompt('Explain the methodology used')" class="prompt-chip text-left px-4 py-3 rounded-xl text-xs transition-all duration-200" style="color:#B9B0A5">
+            <i class="fa-solid fa-flask mr-2" style="color:#e8a882"></i>Explain the methodology used
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Input Area -->
+  <div class="input-area px-4 md:px-8 py-4 flex-shrink-0">
+    <div class="max-w-3xl mx-auto">
+      <div class="input-box flex items-end gap-3 rounded-2xl px-4 py-3">
+        <textarea id="queryInput" rows="1"
+          placeholder="Ask anything about your documents…"
+          class="flex-1 bg-transparent resize-none outline-none text-sm leading-relaxed max-h-36 overflow-y-auto custom-scroll" style="color:#F5F1EB"
+          onkeydown="handleKeyDown(event)" oninput="autoResize(this)"></textarea>
+        <button id="micBtn" onclick="toggleMic()" title="Voice input"
+          class="w-10 h-10 flex-shrink-0 rounded-xl flex items-center justify-center transition-all duration-200"
+          style="color:#8E8478;background:transparent;border:none">
+          <i id="micIcon" class="fa-solid fa-microphone text-sm"></i>
+        </button>
+        <button id="sendBtn" onclick="sendQuery()"
+          class="send-btn w-10 h-10 flex-shrink-0 rounded-xl flex items-center justify-center transition-all duration-200 text-white disabled:opacity-40">
+          <i class="fa-solid fa-arrow-up text-sm"></i>
+        </button>
+      </div>
+      <p class="text-[10px] text-center mt-2 tracking-wide" style="color:#d4cec7">Made By Ayush Raj For Treyansh Global Services</p>
+    </div>
+  </div>
+</main>
+
+<!-- ══════════════════════════ TOAST ══════════════════════════════────────── -->
+<div id="toast" class="fixed bottom-6 right-6 hidden z-50 toast-enter">
+  <div class="glass-toast flex items-center gap-3 px-4 py-3 rounded-2xl shadow-2xl">
+    <i id="toastIcon" class="fa-solid fa-circle-check text-emerald-400 text-sm"></i>
+    <span id="toastMsg" class="text-sm text-white font-medium"></span>
+  </div>
+</div>
+
+<!-- ══════════════════════════ ANALYTICS MODAL ══════════════════════════── -->
+<div id="analyticsModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeAnalytics()"></div>
+  <div class="modal-panel relative w-full max-w-lg rounded-2xl p-6 z-10">
+    <div class="flex items-center justify-between mb-5">
+      <h3 class="font-bold flex items-center gap-2" style="color:#F5F1EB"><i class="fa-solid fa-chart-bar" style="color:#D97757"></i> Analytics Dashboard</h3>
+      <button onclick="closeAnalytics()" style="color:#8E8478"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="stat-card rounded-xl p-4 mb-4 text-center">
+      <div id="analyticsTotalQueries" class="text-3xl font-bold text-white">0</div>
+      <div class="text-xs uppercase tracking-widest mt-1" style="color:#D97757">Total Queries</div>
+    </div>
+    <p class="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Query Frequency — Last 7 Days</p>
+    <div id="queryGraph" class="flex items-end gap-1 h-20 mb-5"></div>
+    <p class="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Top Queries</p>
+    <div id="topQueries" class="max-h-40 overflow-y-auto custom-scroll"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ NOTES MODAL ════════════════════════════════── -->
+<div id="notesModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeNotes()"></div>
+  <div class="modal-panel relative w-full max-w-lg rounded-2xl p-6 z-10">
+    <div class="flex items-center justify-between mb-5">
+      <h3 class="font-bold flex items-center gap-2" style="color:#F5F1EB"><i class="fa-solid fa-note-sticky" style="color:#D97757"></i> Notes</h3>
+      <button onclick="closeNotes()" style="color:#8E8478"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="flex gap-2 mb-4">
+      <textarea id="noteInput" rows="2" placeholder="Write a note…"
+        class="flex-1 rounded-xl px-3 py-2 text-sm outline-none resize-none" style="background:#34302B;border:1px solid #4A443D;color:#F5F1EB"></textarea>
+      <button onclick="saveNote()" class="send-btn px-4 rounded-xl text-sm text-white">Save</button>
+    </div>
+    <div id="notesList" class="space-y-2 max-h-64 overflow-y-auto custom-scroll"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ SUMMARY MODAL ══════════════════════════════── -->
+<div id="summaryModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeSummary()"></div>
+  <div class="modal-panel relative w-full max-w-lg rounded-2xl p-6 z-10">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="font-bold flex items-center gap-2" style="color:#F5F1EB"><i class="fa-solid fa-wand-magic-sparkles" style="color:#D97757"></i> Summary</h3>
+      <button onclick="closeSummary()" style="color:#8E8478"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <p id="summaryTitle" class="text-xs mb-3" style="color:#D97757"></p>
+    <div id="summaryBody" class="answer-content text-sm max-h-80 overflow-y-auto custom-scroll" style="color:#B9B0A5"></div>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+<script>
+// Particle canvas
+(function(){
+  const canvas = document.getElementById('particleCanvas');
+  const ctx = canvas.getContext('2d');
+  let particles = [];
+  function resize(){ canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+  resize();
+  window.addEventListener('resize', resize);
+  for(let i=0;i<60;i++) particles.push({
+    x: Math.random()*window.innerWidth, y: Math.random()*window.innerHeight,
+    r: Math.random()*1.5+0.5, vx: (Math.random()-.5)*.3, vy: (Math.random()-.5)*.3,
+    a: Math.random()*.5+.1
+  });
+  function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    particles.forEach(p=>{
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+      ctx.fillStyle=`rgba(217,119,87,${p.a})`;
+      ctx.fill();
+      p.x+=p.vx; p.y+=p.vy;
+      if(p.x<0||p.x>canvas.width) p.vx*=-1;
+      if(p.y<0||p.y>canvas.height) p.vy*=-1;
+    });
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+function setPrompt(text){
+  const el = document.getElementById('queryInput');
+  el.value = text;
+  autoResize(el);
+  el.focus();
+}
+</script>
+</body>
+</html>
