@@ -25,6 +25,13 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "rag-secret-key-change-in-production")
 CORS(app)
 
+# Debug: print whether GROQ_API_KEY is visible to the process (masked)
+_gk = os.getenv("GROQ_API_KEY")
+if _gk:
+    print(f"GROQ_API_KEY present (len={len(_gk)})")
+else:
+    print("GROQ_API_KEY not present")
+
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "uploads")
 FAISS_FOLDER = os.getenv("FAISS_FOLDER", "faiss_store")
 MAX_FILE_MB = int(os.getenv("MAX_FILE_SIZE_MB", 50))
@@ -45,33 +52,40 @@ chat_sessions: Dict[str, List[Dict]] = {}
 
 def get_llm_response(messages: List[Dict]) -> str:
     provider = os.getenv("LLM_PROVIDER", "groq").lower()
-    try:
-        if provider == "groq":
-            from groq import Groq
-            client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-            model = os.getenv("GROQ_MODEL", "llama3-70b-8192")
-            resp = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.1,
-                max_tokens=1024,
-            )
-            return resp.choices[0].message.content
-        elif provider == "openai":
-            from openai import OpenAI
-            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-            model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
-            resp = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.1,
-                max_tokens=1024,
-            )
-            return resp.choices[0].message.content
-        else:
-            return f"Unknown LLM provider: {provider}."
-    except Exception as e:
-        return f"Error: {str(e)}"
+    if provider == "groq":
+        from groq import Groq
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise ValueError("Missing GROQ_API_KEY environment variable.")
+        client = Groq(api_key=api_key)
+        model = os.getenv("GROQ_MODEL", "llama3-70b-8192")
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.1,
+            max_tokens=1024,
+        )
+        if not getattr(resp, "choices", None):
+            raise ValueError("Groq returned no choices.")
+        return resp.choices[0].message.content
+    elif provider == "openai":
+        from openai import OpenAI
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("Missing OPENAI_API_KEY environment variable.")
+        client = OpenAI(api_key=api_key)
+        model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.1,
+            max_tokens=1024,
+        )
+        if not getattr(resp, "choices", None):
+            raise ValueError("OpenAI returned no choices.")
+        return resp.choices[0].message.content
+    else:
+        raise ValueError(f"Unknown LLM provider: {provider}.")
 
 
 def allowed_file(filename: str) -> bool:
@@ -80,8 +94,11 @@ def allowed_file(filename: str) -> bool:
 
 def load_chat_history() -> Dict:
     if os.path.exists(CHAT_HISTORY_FILE):
-        with open(CHAT_HISTORY_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(CHAT_HISTORY_FILE, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            return {}
     return {}
 
 
@@ -90,7 +107,15 @@ def save_chat_history(history: Dict):
         json.dump(history, f, indent=2)
 
 
-def load_json(path): return json.load(open(path)) if os.path.exists(path) else {}
+def load_json(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
 def save_json(path, data):
     with open(path, "w") as f: json.dump(data, f, indent=2)
 
@@ -170,7 +195,10 @@ def query_documents():
     context = format_context(chunks)
     history = chat_sessions.get(session_id, [])
     messages = build_prompt(query, context, history)
-    answer = get_llm_response(messages)
+    try:
+        answer = get_llm_response(messages)
+    except Exception as e:
+        return jsonify({"error": f"LLM request failed: {str(e)}"}), 500
     if session_id not in chat_sessions:
         chat_sessions[session_id] = []
     chat_sessions[session_id].append({"role": "user", "content": query})
@@ -335,9 +363,64 @@ def get_analytics():
     analytics = load_json(ANALYTICS_FILE)
     daily = analytics.get("daily", {})
     queries = analytics.get("queries", [])
+    
     from collections import Counter
-    top = Counter(q["q"] for q in queries).most_common(10)
-    return jsonify({"daily": daily, "total_queries": len(queries), "top_queries": top}), 200
+    from datetime import datetime, timedelta
+    
+    # Calculate totals
+    total_queries = len(queries)
+    
+    # Top queries
+    top_queries = Counter(q["q"] for q in queries).most_common(10)
+    
+    # Query trends (last 7 days)
+    today = datetime.now()
+    trend = {}
+    for i in range(6, -1, -1):
+        date = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+        trend[date] = daily.get(date, 0)
+    
+    # Document stats
+    doc_stats = doc_store.get_stats()
+    total_docs = doc_stats["total_documents"]
+    total_chunks = doc_stats["total_chunks"]
+    
+    # Average queries per day
+    active_days = len([v for v in daily.values() if v > 0])
+    avg_queries_per_day = round(total_queries / max(active_days, 1), 1)
+    
+    # Peak usage day
+    peak_day = max(daily.items(), default=("N/A", 0))[0]
+    peak_count = max(daily.values(), default=0)
+    
+    # Query type analysis
+    query_types = {"questions": 0, "summarize": 0, "explain": 0, "list": 0, "other": 0}
+    for q_obj in queries:
+        q_text = q_obj["q"].lower()
+        if "?" in q_text:
+            query_types["questions"] += 1
+        elif any(word in q_text for word in ["summarize", "summary", "overview"]):
+            query_types["summarize"] += 1
+        elif any(word in q_text for word in ["explain", "describe", "tell"]):
+            query_types["explain"] += 1
+        elif any(word in q_text for word in ["list", "show", "find", "what are"]):
+            query_types["list"] += 1
+        else:
+            query_types["other"] += 1
+    
+    return jsonify({
+        "total_queries": total_queries,
+        "daily": trend,
+        "top_queries": list(top_queries),
+        "total_documents": total_docs,
+        "total_chunks": total_chunks,
+        "avg_queries_per_day": avg_queries_per_day,
+        "active_days": active_days,
+        "peak_day": peak_day,
+        "peak_count": peak_count,
+        "query_types": query_types,
+        "documents": doc_stats.get("documents", []),
+    }), 200
 
 
 @app.route("/api/summary/<file_hash>", methods=["GET"])
@@ -351,9 +434,14 @@ def summarize_document(file_hash):
         {"role": "system", "content": "Summarize the following document content in 5-7 concise bullet points."},
         {"role": "user", "content": combined}
     ]
-    summary = get_llm_response(messages)
+    try:
+        summary = get_llm_response(messages)
+    except Exception as e:
+        return jsonify({"error": f"LLM request failed: {str(e)}"}), 500
     return jsonify({"filename": doc_info["filename"], "summary": summary}), 200
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000, threaded=True)
+    port = int(os.environ.get("PORT", 5000))
+    debug = os.environ.get("FLASK_DEBUG", "0") in ("1", "true", "True")
+    app.run(debug=debug, host="0.0.0.0", port=port, threaded=True)
